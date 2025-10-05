@@ -1,6 +1,7 @@
 mod libs;
 
 use libs::config;
+use libs::graphite;
 use libs::server;
 
 fn main() {
@@ -17,5 +18,14 @@ fn main() {
 
     server.run(|message| {
         log::info!("Received: {}", message);
+
+        match graphite::GraphiteMetric::parse(&message.to_string()) {
+            Ok(metric) => {
+                log::debug!("Parsed metric: {:?}", metric);
+            }
+            Err(e) => {
+                log::error!("failed to parse metric: {}", e);
+            }
+        }
     });
 }
