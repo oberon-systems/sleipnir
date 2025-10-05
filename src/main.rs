@@ -15,5 +15,7 @@ fn main() {
             std::process::exit(1);
         });
 
-    server.run();
+    server.run(|message| {
+        log::info!("Received: {}", message);
+    });
 }

@@ -7,7 +7,6 @@ use std::time::Duration;
 #[test]
 #[serial]
 fn test_server_bind() {
-    // use port "0" and OS will choose port dynamicly
     let server = TcpServer::new("127.0.0.1", "0");
     assert!(server.is_ok(), "server should start");
 }
@@ -15,14 +14,13 @@ fn test_server_bind() {
 #[test]
 #[serial]
 fn test_server_client_connection() {
-    // use port "0" and OS will choose port dynamicly
     let server = TcpServer::new("127.0.0.1", "0").unwrap();
     let addr = server.listener.local_addr().unwrap();
 
     // spawn in a new thread
     thread::spawn(move || {
         if let Ok(stream) = server.listener.accept() {
-            TcpServer::handle_client(stream.0);
+            TcpServer::handle_client(stream.0, |_| {});
         }
     });
 

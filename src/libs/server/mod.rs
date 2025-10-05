@@ -15,12 +15,16 @@ impl TcpServer {
         Ok(TcpServer { listener })
     }
 
-    // run instance
-    pub fn run(&self) {
+    // run instance with message handler
+    pub fn run<F>(&self, handler: F)
+    where
+        F: FnMut(String) + Send + 'static + Clone,
+    {
         for stream in self.listener.incoming() {
             match stream {
                 Ok(stream) => {
-                    Self::handle_client(stream);
+                    let handler_clone = handler.clone();
+                    Self::handle_client(stream, handler_clone);
                 }
                 Err(e) => {
                     log::error!("unable to handle a new client: {}", e);
@@ -30,7 +34,10 @@ impl TcpServer {
     }
 
     // a client connection handler
-    fn handle_client(stream: TcpStream) {
+    fn handle_client<F>(stream: TcpStream, mut handler: F)
+    where
+        F: FnMut(String),
+    {
         let peer_addr = stream.peer_addr().unwrap();
         log::debug!("connected: {}", peer_addr);
 
@@ -40,6 +47,7 @@ impl TcpServer {
             match line {
                 Ok(data) => {
                     log::debug!("received: {}", data);
+                    handler(data);
                 }
                 Err(e) => {
                     log::error!("data read error: {}", e);
