@@ -1,0 +1,151 @@
+services:
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    ports:
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
+    environment:
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=
+      - CLICKHOUSE_DB=default
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    volumes:
+      - ./clickhouse/prometheus.xml:/etc/clickhouse-server/config.d/prometheus.xml:ro
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--host", "localhost", "--query", "SELECT 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: 1.0
+          memory: 4G
+        reservations:
+          cpus: 1.0
+          memory: 1G
+
+
+  clickhouse-init:
+    image: clickhouse/clickhouse-server:latest
+    volumes:
+      - ./clickhouse/init/init:/init
+      - ./clickhouse/init/init.sql:/init.sql
+    entrypoint: /init
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    deploy:
+      resources:
+        limits:
+          cpus: 0.5
+          memory: 512M
+        reservations:
+          cpus: 0.2
+          memory: 256M
+
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/clickhouse.json
+    volumes:
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: 0.5
+          memory: 512M
+        reservations:
+          cpus: 0.2
+          memory: 256M
+
+
+  tabix:
+    image: spoonest/clickhouse-tabix-web-client:latest
+    ports:
+      - "127.0.0.1:8080:80"
+    stop_grace_period: 1s
+    environment:
+      - CH_NAME=ClickHouse Server
+      - CH_HOST=http://127.0.0.1:8123
+      - CH_LOGIN=default
+      - CH_PASSWORD=
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: 0.5
+          memory: 512M
+        reservations:
+          cpus: 0.2
+          memory: 256M
+
+
+  sleipnir:
+    image: sleipnir:latest
+    stop_grace_period: 1s
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_CH_URL: http://clickhouse:8123
+      APP_CH_PASSWORD: ""
+      RUST_BACKTRACE: 1
+      RUST_LOG: debug
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    build:
+      context: ../target/x86_64-unknown-linux-musl/release
+      dockerfile: ../../../tests/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+    deploy:
+      resources:
+        limits:
+          cpus: 2
+          memory: 512M
+        reservations:
+          cpus: 1
+          memory: 256M
+
+
+  generator:
+    image: generator:latest
+    stop_grace_period: 1s
+    depends_on:
+      - sleipnir
+    deploy:
+      resources:
+        limits:
+          cpus: 0.2
+          memory: 128M
+        reservations:
+          cpus: 0.1
+          memory: 64M
+      replicas: 5
+    environment:
+      APP_HOST: sleipnir
+      APP_PORT: 8080
+    build:
+      context: ./py
+      args:
+        BUILDKIT_INLINE_CACHE: 1

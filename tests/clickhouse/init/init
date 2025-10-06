@@ -1,0 +1,10 @@
+#!/bin/sh
+
+until
+	clickhouse-client --host clickhouse --query "SELECT 1"
+do
+	echo "Waiting for ClickHouse to be ready..."
+	sleep 1
+done
+
+clickhouse-client --host clickhouse --queries-file=/init.sql
