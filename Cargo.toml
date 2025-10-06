@@ -2,8 +2,25 @@
 name = "sleipnir"
 version = "0.1.0"
 edition = "2024"
+authors = ["Oberon Systems <info@oberon.systems>"]
+description = "Graphite to Clickhouse Metrics Obfuscation"
+license = "MIT"
+repository = "https://github.com/oberon-systems/sleipnir"
+readme = "README.md"
+keywords = ["clickhouse", "graphite", "obfuscatation", "metrics"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "sleipnir"
+path = "src/main.rs"
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/x86_64-unknown-linux-musl/release/sleipnir", dest = "/usr/bin/sleipnir", mode = "555" }
+]
 
 [dependencies]
+clickhouse = "0.13.3"
 tokio = { version = "1.47.1", features = ["net", "io-util", "rt-multi-thread", "macros"] }
 log = "0.4.28"
 env_logger = "0.11.8"
