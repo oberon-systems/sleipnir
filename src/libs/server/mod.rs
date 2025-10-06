@@ -1,5 +1,6 @@
-use std::io::{BufRead, BufReader};
-use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::net::{TcpListener, TcpStream};
 
 pub struct TcpServer {
     listener: TcpListener,
@@ -7,24 +8,30 @@ pub struct TcpServer {
 
 impl TcpServer {
     // create new instance
-    pub fn new(host: &str, port: &str) -> std::io::Result<Self> {
+    pub async fn new(host: &str, port: &str) -> std::io::Result<Self> {
         let addr = format!("{}:{}", host, port);
-        let listener = TcpListener::bind(&addr)?;
+        let listener = TcpListener::bind(&addr).await?;
 
         log::debug!("listen at {}:{}", host, port);
         Ok(TcpServer { listener })
     }
 
     // run instance with message handler
-    pub fn run<F>(&self, handler: F)
+    pub async fn run<F>(&self, handler: F)
     where
-        F: FnMut(String) + Send + 'static + Clone,
+        F: Fn(String) + Send + Sync + 'static,
     {
-        for stream in self.listener.incoming() {
-            match stream {
-                Ok(stream) => {
-                    let handler_clone = handler.clone();
-                    Self::handle_client(stream, handler_clone);
+        let handler = Arc::new(handler);
+
+        loop {
+            match self.listener.accept().await {
+                Ok((stream, _)) => {
+                    let handler_clone = Arc::clone(&handler);
+
+                    // spawn one task per client connection
+                    tokio::spawn(async move {
+                        Self::handle_client(stream, handler_clone).await;
+                    });
                 }
                 Err(e) => {
                     log::error!("unable to handle a new client: {}", e);
@@ -33,27 +40,21 @@ impl TcpServer {
         }
     }
 
-    // a client connection handler
-    fn handle_client<F>(stream: TcpStream, mut handler: F)
+    // a client connection handler - processes all messages from one client
+    async fn handle_client<F>(stream: TcpStream, handler: Arc<F>)
     where
-        F: FnMut(String),
+        F: Fn(String),
     {
         let peer_addr = stream.peer_addr().unwrap();
         log::debug!("connected: {}", peer_addr);
 
         let reader = BufReader::new(stream);
+        let mut lines = reader.lines();
 
-        for line in reader.lines() {
-            match line {
-                Ok(data) => {
-                    log::debug!("received: {}", data);
-                    handler(data);
-                }
-                Err(e) => {
-                    log::error!("data read error: {}", e);
-                    break;
-                }
-            }
+        // process all messages from this client in this one task
+        while let Ok(Some(data)) = lines.next_line().await {
+            log::debug!("received: {}", data);
+            handler(data);
         }
 
         log::debug!("disconnected: {}", peer_addr);
