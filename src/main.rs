@@ -2,6 +2,7 @@ mod libs;
 
 use libs::config;
 use libs::graphite;
+use libs::obf;
 use libs::server;
 
 fn main() {
@@ -17,11 +18,15 @@ fn main() {
         });
 
     server.run(|message| {
-        log::info!("Received: {}", message);
+        log::info!("received: {}", message);
 
+        // parse provided metric and obfuscate it and process to CH
         match graphite::GraphiteMetric::parse(&message.to_string()) {
             Ok(metric) => {
-                log::debug!("Parsed metric: {:?}", metric);
+                log::debug!("parsed metric: {:?}", metric);
+
+                let obf_metric = obf::obfuscate(&metric);
+                log::debug!("obf metric: {:?}", obf_metric);
             }
             Err(e) => {
                 log::error!("failed to parse metric: {}", e);
