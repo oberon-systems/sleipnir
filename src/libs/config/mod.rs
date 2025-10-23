@@ -19,6 +19,8 @@ pub struct Config {
     pub ch_table: String,
     #[serde(default = "default_database")]
     pub ch_database: String,
+    #[serde(default = "default_connection_timeout")]
+    pub connection_timeout: u8,
     #[serde(default = "default_host")]
     pub host: String,
     #[serde(default = "default_port")]
@@ -46,6 +48,9 @@ fn default_batch_size() -> u16 {
 }
 fn default_port() -> u16 {
     8080
+}
+fn default_connection_timeout() -> u8 {
+    30
 }
 
 /*

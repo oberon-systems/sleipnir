@@ -50,9 +50,19 @@ Install musl library for build binaries static.
 rustup target add x86_64-unknown-linux-musl
 ```
 
+Also, you have to install deps
+
+```shell
+sudo apt-get install libssl-dev pkg-config musl-tools musl-dev
+```
+
 Build release binaries static.
 
 ```shell
+export OPENSSL_STATIC=1
+export OPENSSL_DIR=/usr
+
+cargo clean
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 

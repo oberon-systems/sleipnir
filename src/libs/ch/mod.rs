@@ -34,7 +34,7 @@ impl ClickHouseWriter {
     }
 
     pub async fn batch(&self, metrics: Vec<Metric>) -> Result<(), clickhouse::error::Error> {
-        let mut insert = self.client.insert(&self.table_name)?;
+        let mut insert = self.client.insert::<Metric>(&self.table_name).await?;
 
         for metric in metrics {
             insert.write(&metric).await?;
