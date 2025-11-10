@@ -30,7 +30,15 @@ You can configure application with next environment variables.
 
 - `APP_PORT`: listen port, defaults to `8080`
 
+- `APP_NUM_WORKERS`: number of workers (futures/routines) to spawn, defaults to `nproc` or `4`
+
+- `APP_CHANNEL_BUFFER`: channels buffer size, defaults to `10000`
+
 For more info please take look to [config mod](./src/libs/config/mod.rs).
+
+Additionally, you can use built-in rust env variables, e.g.
+
+- `RUST_LOG`: set log level, defaults to `info`.
 
 ---
 
