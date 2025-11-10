@@ -9,6 +9,10 @@ pub struct Config {
     pub ch_url: String,
     pub ch_password: String,
     // optional params
+    #[serde(default = "default_num_workers")]
+    pub num_workers: u8,
+    #[serde(default = "default_channel_buffer")]
+    pub channel_buffer: u32,
     #[serde(default = "default_flush_interval")]
     pub flush_interval: u8,
     #[serde(default = "default_batch_size")]
@@ -51,6 +55,14 @@ fn default_port() -> u16 {
 }
 fn default_connection_timeout() -> u8 {
     30
+}
+fn default_num_workers() -> u8 {
+    std::thread::available_parallelism()
+        .map(|n| n.get() as u8)
+        .unwrap_or(4)
+}
+fn default_channel_buffer() -> u32 {
+    10000
 }
 
 /*

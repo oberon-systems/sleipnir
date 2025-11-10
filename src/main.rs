@@ -5,9 +5,9 @@ use libs::config;
 use libs::graphite;
 use libs::obf;
 use libs::server;
+
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::time::{Duration, interval};
+use tokio::time::{Duration, Instant};
 
 #[tokio::main]
 async fn main() {
@@ -18,7 +18,6 @@ async fn main() {
 
     log::info!("starting...");
 
-    // init database writer
     let writer = Arc::new(ClickHouseWriter::new(
         &config.ch_url,
         &config.ch_database,
@@ -27,34 +26,120 @@ async fn main() {
         &config.ch_table,
     ));
 
-    let batch_buffer: Arc<Mutex<Vec<Metric>>> = Arc::new(Mutex::new(Vec::new()));
     let batch_size = config.batch_size;
     let flush_interval = config.flush_interval;
 
-    // required for new flush
-    let writer_clone = Arc::clone(&writer);
-    let buffer_clone = Arc::clone(&batch_buffer);
+    let (tx, rx) = flume::bounded::<String>(config.channel_buffer.try_into().unwrap());
+    let num_workers = config.num_workers;
 
-    tokio::spawn(async move {
-        let mut interval = interval(Duration::from_secs(flush_interval as u64));
+    for worker_id in 0..num_workers {
+        let rx = rx.clone();
+        let writer = Arc::clone(&writer);
 
-        loop {
-            interval.tick().await;
+        tokio::spawn(async move {
+            log::info!("worker {} started", worker_id);
 
-            let mut buffer = buffer_clone.lock().await;
+            let mut local_buffer = Vec::with_capacity(batch_size as usize);
+            let mut last_flush = Instant::now();
+            let mut processed = 0;
 
-            if !buffer.is_empty() {
-                log::info!("flushing {} metrics to ClickHouse", buffer.len());
+            loop {
+                let elapsed = last_flush.elapsed();
+                let timeout_duration = Duration::from_secs(flush_interval as u64);
 
-                match writer_clone.batch(buffer.drain(..).collect()).await {
-                    Ok(_) => log::debug!("batch flushed successfully"),
-                    Err(e) => log::error!("failed to flush batch: {}", e),
+                let mut got_messages = false;
+
+                for _ in 0..1000 {
+                    match rx.try_recv() {
+                        Ok(msg) => {
+                            got_messages = true;
+                            processed += 1;
+
+                            match graphite::GraphiteMetric::parse(&msg) {
+                                Ok(metric) => {
+                                    let obf_metric = obf::obfuscate(&metric);
+
+                                    let ch_metric = Metric {
+                                        path: obf_metric.0,
+                                        value: obf_metric.1,
+                                        timestamp: obf_metric.2,
+                                    };
+
+                                    local_buffer.push(ch_metric);
+
+                                    if local_buffer.len() >= batch_size as usize {
+                                        log::info!(
+                                            "[{}]: flushing {} metrics (batch full), total processed: {}",
+                                            worker_id,
+                                            local_buffer.len(),
+                                            processed
+                                        );
+
+                                        match writer.batch(std::mem::take(&mut local_buffer)).await
+                                        {
+                                            Ok(_) => {
+                                                log::debug!(
+                                                    "[{}]: batch written successfully",
+                                                    worker_id
+                                                );
+                                                last_flush = Instant::now();
+                                            }
+                                            Err(e) => log::error!(
+                                                "[{}]: failed to write batch: {}",
+                                                worker_id,
+                                                e
+                                            ),
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("[{}]: failed to parse metric: {}", worker_id, e);
+                                }
+                            }
+                        }
+                        Err(flume::TryRecvError::Empty) => break,
+                        Err(flume::TryRecvError::Disconnected) => {
+                            if !local_buffer.is_empty() {
+                                log::info!(
+                                    "[{}]: final flush {} metrics",
+                                    worker_id,
+                                    local_buffer.len()
+                                );
+                                let _ = writer.batch(std::mem::take(&mut local_buffer)).await;
+                            }
+                            log::info!(
+                                "worker {} stopped, processed {} total",
+                                worker_id,
+                                processed
+                            );
+                            return;
+                        }
+                    }
+                }
+
+                if !got_messages {
+                    if elapsed >= timeout_duration && !local_buffer.is_empty() {
+                        log::info!(
+                            "[{}]: flushing {} metrics (timeout)",
+                            worker_id,
+                            local_buffer.len()
+                        );
+
+                        match writer.batch(std::mem::take(&mut local_buffer)).await {
+                            Ok(_) => {
+                                log::debug!("[{}]: batch written successfully", worker_id);
+                                last_flush = Instant::now();
+                            }
+                            Err(e) => log::error!("[{}]: failed to write batch: {}", worker_id, e),
+                        }
+                    } else {
+                        tokio::task::yield_now().await;
+                    }
                 }
             }
-        }
-    });
+        });
+    }
 
-    // create server
     let server = server::TcpServer::new(&config.host, &config.port.to_string())
         .await
         .unwrap_or_else(|e| {
@@ -62,75 +147,15 @@ async fn main() {
             std::process::exit(1);
         });
 
-    // clone for provide into server async threads
-    let writer_for_server = Arc::clone(&writer);
-    let buffer_for_server = Arc::clone(&batch_buffer);
-
-    // run server
     server
         .run(move |message| {
-            let writer = Arc::clone(&writer_for_server);
-            let buffer = Arc::clone(&buffer_for_server);
+            let tx = tx.clone();
 
-            let handle = tokio::spawn(async move {
-                log::info!("received: {}", message);
-
-                // parse provided metric and obfuscate it and process to CH
-                match graphite::GraphiteMetric::parse(&message.to_string()) {
-                    Ok(metric) => {
-                        log::debug!("parsed metric: {:?}", metric);
-
-                        let obf_metric = obf::obfuscate(&metric);
-                        log::debug!("obf metric: {:?}", obf_metric);
-
-                        // convert metrics for ch writer
-                        let ch_metric = Metric {
-                            path: obf_metric.0,
-                            value: obf_metric.1,
-                            timestamp: obf_metric.2,
-                        };
-
-                        log::debug!("created ch_metric: {:?}", ch_metric);
-
-                        // add into buffer
-                        let mut buf = buffer.lock().await;
-                        log::debug!("acquired buffer lock, current size: {}", buf.len());
-                        buf.push(ch_metric);
-                        log::debug!("pushed metric, new size: {}", buf.len());
-
-                        // flush if buffer is full
-                        if buf.len() >= batch_size as usize {
-                            log::info!("batch size reached, flushing {} metrics", buf.len());
-
-                            match writer.batch(buf.drain(..).collect()).await {
-                                Ok(_) => log::debug!("batch written successfully"),
-                                Err(e) => log::error!("failed to write batch: {}", e),
-                            }
-                        } else {
-                            log::debug!("buffer not full yet: {}/{}", buf.len(), batch_size);
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("failed to parse metric: {}", e);
-                    }
-                }
-            });
-
-            // log if thread has been crashed
-            tokio::spawn(async move {
-                if let Err(e) = handle.await {
-                    log::error!("spawned task panicked: {:?}", e);
-                }
-            });
+            if let Err(e) = tx.try_send(message) {
+                log::error!("channel full, dropping message: {}", e);
+            }
         })
         .await;
-
-    // flush before exit for do not loose metrics
-    let mut buffer = batch_buffer.lock().await;
-    if !buffer.is_empty() {
-        log::info!("final flush: {} metrics", buffer.len());
-        let _ = writer.batch(buffer.drain(..).collect()).await;
-    }
 
     log::info!("stopped");
 }
