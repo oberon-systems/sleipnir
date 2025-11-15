@@ -1,4 +1,5 @@
-use clickhouse::{Client, Row};
+use std::time::Duration;
+use clickhouse::{Client, Row, inserter::Inserter};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Row)]
@@ -33,6 +34,7 @@ impl ClickHouseWriter {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn batch(&self, metrics: Vec<Metric>) -> Result<(), clickhouse::error::Error> {
         let mut insert = self.client.insert::<Metric>(&self.table_name).await?;
 
@@ -42,5 +44,12 @@ impl ClickHouseWriter {
 
         insert.end().await?;
         Ok(())
+    }
+
+    pub fn create_inserter(&self, max_rows: u64, period_secs: u64) -> Inserter<Metric> {
+        self.client
+            .inserter::<Metric>(&self.table_name)
+            .with_max_rows(max_rows)
+            .with_period(Some(Duration::from_secs(period_secs)))
     }
 }
