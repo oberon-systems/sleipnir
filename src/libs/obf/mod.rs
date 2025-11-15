@@ -1,32 +1,47 @@
-use std::collections::hash_map::DefaultHasher;
+use ahash::AHasher;
 use std::hash::{Hash, Hasher};
-
 use crate::libs::graphite::GraphiteMetric;
 
-fn hash_string(input: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    input.hash(&mut hasher);
-    let hash = hasher.finish();
-    format!("obf_{:x}", hash)
+// maximum resulted metric length
+// name + 16 tags * 32 bytes
+pub const MAX_METRIC_LEN: usize = 512;
+
+#[inline(always)]
+fn fast_hash(input: &str) -> u64 {
+    let mut h = AHasher::default();
+    input.hash(&mut h);
+    h.finish()
 }
 
-pub fn obfuscate(metric: &GraphiteMetric) -> (String, f64, i64) {
-    let name = hash_string(&metric.name);
+// write u64 hex directly into buffer
+#[inline(always)]
+fn write_hex(mut n: u64, buf: &mut [u8], pos: &mut usize) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for i in (0..16).rev() {
+        buf[*pos + i] = HEX[(n & 0xF) as usize];
+        n >>= 4;
+    }
+    *pos += 16;
+}
 
-    let mut result = name;
+// obfuscate one metric and write into buffer
+pub fn obfuscate<'a>(metric: &GraphiteMetric, buf: &'a mut [u8; MAX_METRIC_LEN]) -> &'a str {
+    let mut pos = 0;
 
+    // name
+    buf[pos..pos+4].copy_from_slice(b"obf_");
+    pos += 4;
+    write_hex(fast_hash(&metric.name), buf, &mut pos);
+
+    // tags
     for (key, value) in &metric.tags {
-        let hashed_value = hash_string(value);
-        result.push_str(&format!(";{}={}", key, hashed_value));
+        buf[pos] = b';'; pos += 1;
+        buf[pos..pos+key.len()].copy_from_slice(key.as_bytes()); pos += key.len();
+        buf[pos] = b'='; pos += 1;
+        buf[pos..pos+4].copy_from_slice(b"obf_"); pos += 4;
+        write_hex(fast_hash(value), buf, &mut pos);
     }
 
-    (result, metric.value, metric.timestamp)
+    // safe transform data from buffer to &str
+    std::str::from_utf8(&buf[..pos]).unwrap()
 }
-
-#[allow(dead_code)]
-pub fn obf_to_string(obfuscated: (String, f64, i64)) -> String {
-    format!("{} {} {}", obfuscated.0, obfuscated.1, obfuscated.2)
-}
-
-#[cfg(test)]
-mod tests;
