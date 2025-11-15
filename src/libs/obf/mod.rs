@@ -1,6 +1,6 @@
+use crate::libs::graphite::GraphiteMetric;
 use ahash::AHasher;
 use std::hash::{Hash, Hasher};
-use crate::libs::graphite::GraphiteMetric;
 
 // maximum resulted metric length
 // name + 16 tags * 32 bytes
@@ -29,16 +29,20 @@ pub fn obfuscate<'a>(metric: &GraphiteMetric, buf: &'a mut [u8; MAX_METRIC_LEN])
     let mut pos = 0;
 
     // name
-    buf[pos..pos+4].copy_from_slice(b"obf_");
+    buf[pos..pos + 4].copy_from_slice(b"obf_");
     pos += 4;
-    write_hex(fast_hash(&metric.name), buf, &mut pos);
+    write_hex(fast_hash(metric.name), buf, &mut pos);
 
     // tags
     for (key, value) in &metric.tags {
-        buf[pos] = b';'; pos += 1;
-        buf[pos..pos+key.len()].copy_from_slice(key.as_bytes()); pos += key.len();
-        buf[pos] = b'='; pos += 1;
-        buf[pos..pos+4].copy_from_slice(b"obf_"); pos += 4;
+        buf[pos] = b';';
+        pos += 1;
+        buf[pos..pos + key.len()].copy_from_slice(key.as_bytes());
+        pos += key.len();
+        buf[pos] = b'=';
+        pos += 1;
+        buf[pos..pos + 4].copy_from_slice(b"obf_");
+        pos += 4;
         write_hex(fast_hash(value), buf, &mut pos);
     }
 

@@ -11,13 +11,12 @@ impl<'a> GraphiteMetric<'a> {
     #[inline(always)]
     pub fn parse(line: &'a str) -> Result<Self, String> {
         let bytes = line.as_bytes();
-        let len = bytes.len();
 
         // try to search first two spaces
         let (mut sp1, mut sp2) = (usize::MAX, usize::MAX);
 
-        for i in 0..len {
-            if bytes[i] == b' ' {
+        for (i, &b) in bytes.iter().enumerate() {
+            if b == b' ' {
                 if sp1 == usize::MAX {
                     sp1 = i;
                 } else {
@@ -26,14 +25,15 @@ impl<'a> GraphiteMetric<'a> {
                 }
             }
         }
+
         if sp1 == usize::MAX || sp2 == usize::MAX {
             return Err(format!("invalid graphite line: {:?}", line));
         }
 
         // collect metric (path), value and timestamp
         let metric = &line[..sp1];
-        let value_str = &line[sp1 + 1 .. sp2];
-        let ts_str = &line[sp2 + 1 ..];
+        let value_str = &line[sp1 + 1..sp2];
+        let ts_str = &line[sp2 + 1..];
 
         // convert value and timestamp
         let value: f64 = value_str.parse().map_err(|_| "bad value")?;
@@ -55,26 +55,38 @@ impl<'a> GraphiteMetric<'a> {
 
         while i < mlen {
             i += 1; // skip ';'
-            if i >= mlen { break; }
+            if i >= mlen {
+                break;
+            }
 
             let key_start = i;
-            while i < mlen && mb[i] != b'=' { i += 1; }
-            if i >= mlen { break; }
+            while i < mlen && mb[i] != b'=' {
+                i += 1;
+            }
+            if i >= mlen {
+                break;
+            }
             let key_end = i;
 
             i += 1; // skip '='
-            if i >= mlen { break; }
+            if i >= mlen {
+                break;
+            }
 
             let val_start = i;
-            while i < mlen && mb[i] != b';' { i += 1; }
+            while i < mlen && mb[i] != b';' {
+                i += 1;
+            }
             let val_end = i;
 
-            tags.push((
-                &metric[key_start..key_end],
-                &metric[val_start..val_end],
-            ));
+            tags.push((&metric[key_start..key_end], &metric[val_start..val_end]));
         }
 
-        Ok(Self { name, tags, value, timestamp })
+        Ok(Self {
+            name,
+            tags,
+            value,
+            timestamp,
+        })
     }
 }

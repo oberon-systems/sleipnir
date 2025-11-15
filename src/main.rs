@@ -6,9 +6,6 @@ use libs::graphite;
 use libs::obf;
 use libs::server;
 
-use std::sync::Arc;
-use tokio::time::{Duration, Instant};
-
 #[tokio::main]
 async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -18,122 +15,90 @@ async fn main() {
 
     log::info!("starting...");
 
-    let writer = Arc::new(ClickHouseWriter::new(
-        &config.ch_url,
-        &config.ch_database,
-        &config.ch_username,
-        &config.ch_password,
-        &config.ch_table,
-    ));
-
-    let batch_size = config.batch_size;
-    let flush_interval = config.flush_interval;
-
     let (tx, rx) = flume::bounded::<String>(config.channel_buffer.try_into().unwrap());
     let num_workers = config.num_workers;
 
     for worker_id in 0..num_workers {
         let rx = rx.clone();
-        let writer = Arc::clone(&writer);
+        let batch_size = config.batch_size;
+        let flush_interval = config.flush_interval;
+
+        let ch_url = config.ch_url.clone();
+        let ch_database = config.ch_database.clone();
+        let ch_username = config.ch_username.clone();
+        let ch_password = config.ch_password.clone();
+        let ch_table = config.ch_table.clone();
 
         tokio::spawn(async move {
             log::info!("worker {} started", worker_id);
 
-            let mut local_buffer = Vec::with_capacity(batch_size as usize);
-            let mut last_flush = Instant::now();
+            let writer =
+                ClickHouseWriter::new(&ch_url, &ch_database, &ch_username, &ch_password, &ch_table);
+            log::info!("[{}]: created writer", worker_id);
+
+            let mut inserter = writer.create_inserter(batch_size.into(), flush_interval.into());
+            log::info!("[{}]: created inserter", worker_id);
+
             let mut processed = 0;
 
             loop {
-                let elapsed = last_flush.elapsed();
-                let timeout_duration = Duration::from_secs(flush_interval as u64);
+                match rx.recv_async().await {
+                    Ok(msg) => {
+                        processed += 1;
 
-                let mut got_messages = false;
+                        if processed % 10000 == 0 {
+                            log::info!("[{}]: processed {} metrics", worker_id, processed);
+                        }
 
-                for _ in 0..1000 {
-                    match rx.try_recv() {
-                        Ok(msg) => {
-                            got_messages = true;
-                            processed += 1;
-
-                            match graphite::GraphiteMetric::parse(&msg) {
-                                Ok(metric) => {
-                                    let obf_metric = obf::obfuscate(&metric);
-
-                                    let ch_metric = Metric {
-                                        path: obf_metric.0,
-                                        value: obf_metric.1,
-                                        timestamp: obf_metric.2,
-                                    };
-
-                                    local_buffer.push(ch_metric);
-
-                                    if local_buffer.len() >= batch_size as usize {
-                                        log::info!(
-                                            "[{}]: flushing {} metrics (batch full), total processed: {}",
-                                            worker_id,
-                                            local_buffer.len(),
-                                            processed
-                                        );
-
-                                        match writer.batch(std::mem::take(&mut local_buffer)).await
-                                        {
-                                            Ok(_) => {
-                                                log::debug!(
-                                                    "[{}]: batch written successfully",
-                                                    worker_id
-                                                );
-                                                last_flush = Instant::now();
-                                            }
-                                            Err(e) => log::error!(
-                                                "[{}]: failed to write batch: {}",
-                                                worker_id,
-                                                e
-                                            ),
-                                        }
-                                    }
+                        if processed % batch_size == 0 {
+                            match inserter.commit().await {
+                                Ok(_) => {
+                                    log::info!(
+                                        "[{}]: inserter: written {} strings",
+                                        worker_id,
+                                        batch_size
+                                    )
                                 }
                                 Err(e) => {
-                                    log::error!("[{}]: failed to parse metric: {}", worker_id, e);
+                                    log::error!(
+                                        "[{}]: inserter: unable to commit: {}",
+                                        worker_id,
+                                        e
+                                    )
                                 }
                             }
                         }
-                        Err(flume::TryRecvError::Empty) => break,
-                        Err(flume::TryRecvError::Disconnected) => {
-                            if !local_buffer.is_empty() {
-                                log::info!(
-                                    "[{}]: final flush {} metrics",
+
+                        match graphite::GraphiteMetric::parse(&msg) {
+                            Ok(metric) => {
+                                let mut buf = [0u8; obf::MAX_METRIC_LEN];
+                                let obf_path = obf::obfuscate(&metric, &mut buf);
+                                let obf_metric = Metric {
+                                    path: obf_path.to_string(),
+                                    value: metric.value,
+                                    timestamp: metric.timestamp,
+                                };
+
+                                log::debug!(
+                                    "[{}]: obf metric: {} {} {}",
                                     worker_id,
-                                    local_buffer.len()
+                                    obf_metric.path,
+                                    obf_metric.value,
+                                    obf_metric.timestamp
                                 );
-                                let _ = writer.batch(std::mem::take(&mut local_buffer)).await;
+
+                                if let Err(e) = inserter.write(&obf_metric).await {
+                                    log::error!("[{}]: failed to write metric: {}", worker_id, e);
+                                }
                             }
-                            log::info!(
-                                "worker {} stopped, processed {} total",
-                                worker_id,
-                                processed
-                            );
-                            return;
+                            Err(e) => {
+                                log::error!("[{}]: failed to parse metric: {}", worker_id, e);
+                            }
                         }
                     }
-                }
-
-                if !got_messages {
-                    if elapsed >= timeout_duration && !local_buffer.is_empty() {
-                        log::info!(
-                            "[{}]: flushing {} metrics (timeout)",
-                            worker_id,
-                            local_buffer.len()
-                        );
-
-                        match writer.batch(std::mem::take(&mut local_buffer)).await {
-                            Ok(_) => {
-                                log::debug!("[{}]: batch written successfully", worker_id);
-                                last_flush = Instant::now();
-                            }
-                            Err(e) => log::error!("[{}]: failed to write batch: {}", worker_id, e),
-                        }
-                    } else {
-                        tokio::task::yield_now().await;
+                    Err(_) => {
+                        log::info!("[{}]: total processed: {}", worker_id, processed);
+                        return;
                     }
                 }
             }

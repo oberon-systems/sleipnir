@@ -1,6 +1,6 @@
-use std::time::Duration;
 use clickhouse::{Client, Row, inserter::Inserter};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Row)]
 pub struct Metric {
