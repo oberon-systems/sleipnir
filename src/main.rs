@@ -39,18 +39,21 @@ async fn main() {
             let mut inserter = writer.create_inserter(batch_size.into(), flush_interval.into());
             log::info!("[{}]: created inserter", worker_id);
 
-            let mut processed = 0;
+            let mut processed: u64 = 0;
 
             loop {
                 match rx.recv_async().await {
                     Ok(msg) => {
-                        processed += 1;
+                        processed = processed.checked_add(1).unwrap_or_else(|| {
+                            log::error!("[{}]: counter overflow: resetting to 0", worker_id);
+                            1 // return (set) 1 and start again
+                        });
 
-                        if processed % 10000 == 0 {
+                        if processed % 10000_u64 == 0 {
                             log::info!("[{}]: processed {} metrics", worker_id, processed);
                         }
 
-                        if processed % batch_size == 0 {
+                        if processed % batch_size as u64 == 0 {
                             match inserter.commit().await {
                                 Ok(_) => {
                                     log::info!(
