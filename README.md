@@ -34,11 +34,33 @@ You can configure application with next environment variables.
 
 - `APP_CHANNEL_BUFFER`: channels buffer size, defaults to `10000`
 
+More over here you can find some Prometheus Client Settings
+
+- `APP_APPLICATION`: `application` label for prometheus, defaults to `sleipnir`
+
+- `APP_CIRCUIT`: `circuit` label for prometheus, defaults to `unknown`
+
+- `APP_ENV`: `env` label for prometheus, defaults to `unknown`
+
+- `APP_PROJECT`: `project` label for prometheus, defaults to `unknown`
+
+- `APP_PROMETHEUS_HOST`: prometheus client host, defaults to `0.0.0.0`
+
+- `APP_PROMETHEUS_PORT`: prometheus client port, defaults to `9090`
+
 For more info please take look to [config mod](./src/libs/config/mod.rs).
 
 Additionally, you can use built-in rust env variables, e.g.
 
 - `RUST_LOG`: set log level, defaults to `info`.
+
+If you would like to skip some tests, you can use next statement:
+
+```shell
+RUSTFLAGS="-A dead_code" pre-commit
+```
+
+I could be helpful when you're adding a library...
 
 ---
 
