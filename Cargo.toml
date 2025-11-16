@@ -1,6 +1,6 @@
 [package]
 name = "sleipnir"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2024"
 authors = ["Oberon Systems <info@oberon.systems>"]
 description = "Graphite to Clickhouse Metrics Obfuscation"
