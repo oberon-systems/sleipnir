@@ -17,6 +17,7 @@ fn fast_hash(input: &str) -> u64 {
 #[inline(always)]
 fn write_hex(mut n: u64, buf: &mut [u8], pos: &mut usize) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
+    assert!(*pos + 16 <= buf.len(), "buffer overflow in write_hex");
     for i in (0..16).rev() {
         buf[*pos + i] = HEX[(n & 0xF) as usize];
         n >>= 4;
@@ -29,12 +30,19 @@ pub fn obfuscate<'a>(metric: &GraphiteMetric, buf: &'a mut [u8; MAX_METRIC_LEN])
     let mut pos = 0;
 
     // name
+    assert!(pos + 4 + 16 <= MAX_METRIC_LEN, "buffer overflow at name");
     buf[pos..pos + 4].copy_from_slice(b"obf_");
     pos += 4;
     write_hex(fast_hash(metric.name), buf, &mut pos);
 
     // tags
     for (key, value) in &metric.tags {
+        assert!(
+            pos + 1 + key.len() + 1 + 4 + 16 <= MAX_METRIC_LEN,
+            "buffer overflow at tag: key='{}', pos={}",
+            key,
+            pos
+        );
         buf[pos] = b';';
         pos += 1;
         buf[pos..pos + key.len()].copy_from_slice(key.as_bytes());
