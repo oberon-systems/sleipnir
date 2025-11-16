@@ -1,6 +1,6 @@
 [package]
 name = "sleipnir"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 authors = ["Oberon Systems <info@oberon.systems>"]
 description = "Graphite to Clickhouse Metrics Obfuscation"
@@ -30,6 +30,7 @@ assets = [
 [dependencies]
 clickhouse = { version = "0.14", features = ["native-tls", "inserter"] }
 tokio = { version = "1.47.1", features = ["net", "io-util", "rt-multi-thread", "macros"] }
+serde = { version = "1.0.225", features = ["derive"] }
 log = "0.4.28"
 env_logger = "0.11.8"
 dotenvy = "0.15.7"
@@ -37,7 +38,8 @@ envy = "0.4.2"
 flume = "0.11.1"
 smallvec = "1.15.1"
 ahash = "0.8.12"
-serde = { version = "1.0.225", features = ["derive"] }
+prometheus-client = "0.24.0"
+
 
 [dependencies.openssl]
 version = "*"
