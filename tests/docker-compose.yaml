@@ -108,6 +108,9 @@ services:
       APP_HOST: 0.0.0.0
       APP_CH_URL: http://clickhouse:8123
       APP_CH_PASSWORD: ""
+      APP_CIRCUIT: testing
+      APP_ENV: test
+      APP_PROJECT: sleipnir
       RUST_BACKTRACE: 1
       RUST_LOG: debug
     depends_on:
