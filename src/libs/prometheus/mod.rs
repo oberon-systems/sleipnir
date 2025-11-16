@@ -19,7 +19,7 @@ pub struct Labels {
 pub struct Prometheus {
     registry: Arc<Mutex<Registry>>,
 
-    labels: Labels,
+    pub labels: Labels,
 
     pub received: Family<Labels, Counter>,
     pub processed: Family<Labels, Counter>,

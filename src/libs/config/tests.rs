@@ -11,6 +11,10 @@ fn test_config_load_all_values() {
     env.set("APP_CH_URL", "ch.example.com");
     env.set("APP_CH_PASSWORD", "password");
 
+    env.set("APP_LABELS_CIRCUIT", "test-circuit");
+    env.set("APP_LABELS_ENV", "test");
+    env.set("APP_LABELS_PROJECT", "test-project");
+
     let config = load();
 
     assert_eq!(config.host, "example.com");
@@ -28,6 +32,10 @@ fn test_config_load_defaults() {
 
     env.set("APP_CH_URL", "ch.example.com");
     env.set("APP_CH_PASSWORD", "password");
+
+    env.set("APP_LABELS_CIRCUIT", "test-circuit");
+    env.set("APP_LABELS_ENV", "test");
+    env.set("APP_LABELS_PROJECT", "test-project");
 
     let config = load();
 

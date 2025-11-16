@@ -1,10 +1,14 @@
 mod libs;
 
 use libs::ch::{ClickHouseWriter, Metric};
-use libs::config;
+use libs::config::{self, PrometheusLabels};
 use libs::graphite;
 use libs::obf;
+use libs::prometheus::Prometheus;
 use libs::server;
+
+use axum::{Router, routing::get};
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
@@ -18,6 +22,42 @@ async fn main() {
     let (tx, rx) = flume::bounded::<String>(config.channel_buffer.try_into().unwrap());
     let num_workers = config.num_workers;
 
+    // init prometheus client
+    let PrometheusLabels {
+        application,
+        circuit,
+        env,
+        project,
+    } = &config.labels;
+    let promc = Arc::new(Prometheus::new(
+        application.clone(),
+        circuit.clone(),
+        env.clone(),
+        project.clone(),
+    ));
+
+    let promc_main = promc.clone();
+
+    // init exporter (web)
+    let promc_web = promc_main.clone();
+    let prometheus_host = config.prometheus_host.clone();
+    let prometheus_port = config.prometheus_port;
+
+    tokio::spawn(async move {
+        let app = Router::new().route("/metrics", get(|| async move { promc_web.export() }));
+
+        let listener =
+            tokio::net::TcpListener::bind(format!("{}:{}", prometheus_host, prometheus_port))
+                .await
+                .unwrap();
+        log::info!(
+            "Metrics server listening on http://{}:{}/metrics",
+            prometheus_host,
+            prometheus_port
+        );
+        axum::serve(listener, app).await.unwrap();
+    });
+
     for worker_id in 0..num_workers {
         let rx = rx.clone();
         let batch_size = config.batch_size;
@@ -28,6 +68,9 @@ async fn main() {
         let ch_username = config.ch_username.clone();
         let ch_password = config.ch_password.clone();
         let ch_table = config.ch_table.clone();
+
+        let promc = promc.clone();
+        let labels = promc.worker_id(worker_id.into());
 
         tokio::spawn(async move {
             log::info!("worker {} started", worker_id);
@@ -44,6 +87,8 @@ async fn main() {
             loop {
                 match rx.recv_async().await {
                     Ok(msg) => {
+                        promc.received.get_or_create(&labels).inc();
+
                         processed = processed.checked_add(1).unwrap_or_else(|| {
                             log::error!("[{}]: counter overflow: resetting to 0", worker_id);
                             1 // return (set) 1 and start again
@@ -90,17 +135,22 @@ async fn main() {
                                     obf_metric.timestamp
                                 );
 
+                                promc.processed.get_or_create(&labels).inc();
+
                                 if let Err(e) = inserter.write(&obf_metric).await {
                                     log::error!("[{}]: failed to write metric: {}", worker_id, e);
+                                    promc.errors.get_or_create(&labels).inc();
                                 }
                             }
                             Err(e) => {
                                 log::error!("[{}]: failed to parse metric: {}", worker_id, e);
+                                promc.errors.get_or_create(&labels).inc();
                             }
                         }
                     }
                     Err(_) => {
                         log::info!("[{}]: total processed: {}", worker_id, processed);
+                        promc.errors.get_or_create(&promc.labels).inc();
                         return;
                     }
                 }
@@ -112,6 +162,7 @@ async fn main() {
         .await
         .unwrap_or_else(|e| {
             log::error!("unable to create a server: {}", e);
+            promc_main.errors.get_or_create(&promc_main.labels).inc();
             std::process::exit(1);
         });
 
@@ -121,6 +172,7 @@ async fn main() {
 
             if let Err(e) = tx.try_send(message) {
                 log::error!("channel full, dropping message: {}", e);
+                promc_main.dropped.get_or_create(&promc_main.labels).inc();
             }
         })
         .await;

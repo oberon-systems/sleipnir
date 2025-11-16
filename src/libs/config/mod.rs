@@ -2,12 +2,21 @@ mod tools;
 
 use serde::Deserialize;
 
+#[derive(Deserialize, Debug)]
+pub struct PrometheusLabels {
+    pub application: String,
+    pub circuit: String,
+    pub env: String,
+    pub project: String,
+}
+
 #[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 pub struct Config {
     // required params
     pub ch_url: String,
     pub ch_password: String,
+
     // optional params
     #[serde(default = "default_num_workers")]
     pub num_workers: u8,
@@ -29,6 +38,14 @@ pub struct Config {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
+
+    // prometheus client
+    #[serde(default = "default_prometheus_labels")]
+    pub labels: PrometheusLabels,
+    #[serde(default = "default_prometheus_host")]
+    pub prometheus_host: String,
+    #[serde(default = "default_prometheus_port")]
+    pub prometheus_port: u16,
 }
 
 /// Defaults
@@ -63,6 +80,22 @@ fn default_num_workers() -> u8 {
 }
 fn default_channel_buffer() -> u32 {
     10000
+}
+
+// Prometheus Client Defaults
+fn default_prometheus_labels() -> PrometheusLabels {
+    PrometheusLabels {
+        application: "sleipnir".to_string(),
+        circuit: "unknown".to_string(),
+        env: "unknown".to_string(),
+        project: "unknown".to_string(),
+    }
+}
+fn default_prometheus_host() -> String {
+    "0.0.0.0".to_string()
+}
+fn default_prometheus_port() -> u16 {
+    9090
 }
 
 /*
